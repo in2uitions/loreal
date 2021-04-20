@@ -7,6 +7,7 @@ use App\User;
 use App\Game;
 use App\Location;
 use App\Barcode;
+use App\Player;
 
 
 
@@ -22,12 +23,31 @@ class MainController extends Controller
      */
     public function createUser(Request $request)
     {
-        $user_id = User::insertGetId(['email'=>$request->email,'name'=>$request->name]);
+        $user_id = Player::insertGetId(['email'=>$request->email,'name'=>$request->name]);
 
-        $user = User::find($user_id);
+        $user = Player::find($user_id);
         $location = Location::where('ref',$request->ref)->first();
 
-        return view('play',compact('user','location'));
+        $cards = array('lantern-moon','lantern-present');
+        
+        $barcode = Barcode::where('barcodes.is_used','<>','1')
+        ->leftJoin('rewards','rewards.id','=','barcodes.reward_id')
+        ->where('rewards.location_id',$location->id)
+        ->inRandomOrder()
+        ->select('barcodes.*','rewards.title')
+        ->count();
+
+        if($barcode > 0)
+        {
+            $win_per = intval(setting('site.win_per'));
+        }
+        else{
+            $win_per = 0;
+        }
+        
+
+
+        return view('play',compact('user','location','cards','win_per'));
 
 
     }
@@ -36,25 +56,54 @@ class MainController extends Controller
     public function setGame(Request $request)
     {
 
-        $barcodes = Barcode::where('barcodes.is_used','<>','1')
+        $barcode = Barcode::where('barcodes.is_used','<>','1')
                             ->leftJoin('rewards','rewards.id','=','barcodes.reward_id')
                             ->where('rewards.location_id',$request->location->id)
                             ->inRandomOrder()
-                            ->limit(2)
                             ->select('barcodes.*','rewards.title')
-                            ->get();
+                            ->first();
         
-        foreach($barcodes as $barcode)
+
+                        Game::insert(['location_id'=>$request->location->id,'player_id'=>$request->user->id,'barcode_id'=>$barcode->id]);
+                        Barcode::where('id',$barcode->id)->update(['is_used','1']);
+        
+        return view('rewards',compact('barcode'));
+
+
+    }
+
+    public function sendResult(Request $request)
+    {
+        $barcode_id = 0;
+        $barcode_code = ' ';
+        $type="";
+        $url="";
+        $reward="";
+        if($request->won == "true")
         {
-            Game::insert(['location_id'=>$request->location->id,'player_id'=>$request->user->id,'barcode_id'=>$barcode->id]);
-            Barcode::where('id',$barcode->id)->update(['is_used','1']);
-        }                    
+            $barcode = Barcode::where('barcodes.is_used','<>','1')
+                        ->leftJoin('rewards','rewards.id','=','barcodes.reward_id')
+                        ->leftJoin('locations','locations.id','=','rewards.location_id')
+                        ->where('rewards.location_id',$request->location)
+                        ->inRandomOrder()
+                        ->select('barcodes.*','rewards.title as title','locations.url','locations.type')
+                        ->first();
+              if(isset($barcode))
+              {
+                  $barcode_id = $barcode->id;
+                  $barcode_code = $barcode->barcode;
+                  Barcode::where('id',$barcode->id)->update(['is_used'=>'1']);
+                  $type=$barcode->type;
+                  $url=$barcode->url;
+                  $reward=$barcode->title;
+                  
+              }          
+        }
+        Game::insert(['location_id'=>$request->location,'player_id'=>$request->user,'barcode_id'=>$barcode_id ]);
         
-        
-        
-        return view('rewards',compact('barcodes'));
 
 
+        return response(['barcode_code'=>$barcode_code,'url'=>$url,'type'=>$type,"reward"=>$reward]);
     }
 
     /**
